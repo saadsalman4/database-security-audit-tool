@@ -1,7 +1,8 @@
 const express = require("express");
-const { scan } = require("../controllers/audit.controller");
+const { sqlScan, mongoScan } = require("../controllers/audit.controller");
 const router = express.Router();
 
-router.post('/scan', scan)
+router.post('/audit/sql', sqlScan)
+router.post('/audit/mongodb', mongoScan)
 
 module.exports = router;

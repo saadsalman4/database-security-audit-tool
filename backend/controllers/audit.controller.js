@@ -1,125 +1,294 @@
-const { Sequelize, QueryTypes } = require("sequelize");
+const { Sequelize, DataTypes } = require('sequelize');
+const { MongoClient } = require('mongodb');
+const bodyParser = require('body-parser');
 
-async function scan(req, res) {
-  const { dialect, host, database, username, password } = req.body;
+async function sqlScan(req, res) {
+  const { host, username, password='', database, dialect } = req.body;
 
-  if (!dialect || !host || !database || !username ) {
-    return res.status(400).json({ success: false, error: "All fields are required" });
+  if (!host || !username || !database || !dialect) {
+    return res.status(400).json({ error: 'Missing required database connection parameters' });
   }
 
+  let sequelize;
   try {
-    const sequelize = new Sequelize(database, username, password, {
+    // Establish database connection
+    sequelize = new Sequelize(database, username, password, {
       host: host,
-      dialect: dialect,
-      logging: false,
+      dialect: dialect, // mysql, postgres, mariadb, mssql
+      logging: false
     });
 
-    await sequelize.authenticate(); // Test connection
-    console.log("Database connected!");
+    // Test connection
+    await sequelize.authenticate();
+    console.log('Connection established successfully.');
+
+    // Start audit process
+    const auditResults = await auditSqlDatabase(sequelize);
     
-    let auditResults = [];
-    
-    try {
-      // Check for Weak Passwords (MySQL Only)
-      if (dialect === "mysql") {
-        const users = await sequelize.query("SELECT user, authentication_string FROM mysql.user", { type: QueryTypes.SELECT });
-        const weakPasswords = users.filter(user => !user.authentication_string || user.authentication_string.length < 10);
-        
-        if (weakPasswords.length > 0) {
-          auditResults.push({
-            issue: `Found ${weakPasswords.length} user(s) with weak or empty passwords`,
-            severity: "High",
-            recommendation: "Set strong passwords for all database users"
-          });
-        }
-      }
-
-      // Check for Excessive Privileges (MySQL Only)
-      if (dialect === "mysql") {
-        try {
-          const privileges = await sequelize.query("SELECT * FROM information_schema.user_privileges", { type: QueryTypes.SELECT });
-          const excessivePrivileges = privileges.filter(p => p.PRIVILEGE_TYPE === "ALL PRIVILEGES");
-          
-          if (excessivePrivileges.length > 0) {
-            auditResults.push({
-              issue: `Found ${excessivePrivileges.length} user(s) with excessive privileges`,
-              severity: "Medium",
-              recommendation: "Apply least privilege principle to database users"
-            });
-          }
-        } catch (error) {
-          console.error("Error checking privileges:", error);
-        }
-      }
-
-      // Check for Dormant Users (MySQL Only)
-      if (dialect === "mysql") {
-        try {
-          const inactiveUsers = await sequelize.query("SELECT user FROM mysql.user WHERE user NOT IN (SELECT user FROM mysql.db)", { type: QueryTypes.SELECT });
-          
-          if (inactiveUsers.length > 0) {
-            auditResults.push({
-              issue: `Found ${inactiveUsers.length} potentially dormant user(s)`,
-              severity: "Low",
-              recommendation: "Review and remove unused database accounts"
-            });
-          }
-        } catch (error) {
-          console.error("Error checking dormant users:", error);
-        }
-      }
-
-      // Check for Missing Indexes (Both MySQL & PostgreSQL with dialect-specific queries)
-      try {
-        let indexesQuery;
-        if (dialect === "mysql") {
-          indexesQuery = "SELECT TABLE_NAME, COUNT(*) as index_count FROM INFORMATION_SCHEMA.STATISTICS GROUP BY TABLE_NAME";
-        } else if (dialect === "postgres") {
-          indexesQuery = "SELECT tablename as TABLE_NAME, COUNT(*) as index_count FROM pg_indexes GROUP BY tablename";
-        }
-        
-        const indexes = await sequelize.query(indexesQuery, { type: QueryTypes.SELECT });
-        const tablesWithNoIndexes = indexes.filter(index => index.index_count === 0);
-        
-        if (tablesWithNoIndexes.length > 0) {
-          auditResults.push({
-            issue: `Found ${tablesWithNoIndexes.length} table(s) without indexes`,
-            severity: "Medium",
-            recommendation: "Review tables and add appropriate indexes for performance"
-          });
-        }
-      } catch (error) {
-        console.error("Error checking indexes:", error);
-      }
-
-      // Check for Database Version (Both MySQL & PostgreSQL)
-      try {
-        const version = await sequelize.query("SELECT VERSION() AS db_version", { type: QueryTypes.SELECT });
-        const dbVersion = version[0].db_version;
-        
-        auditResults.push({
-          issue: `Database version: ${dbVersion}`,
-          severity: "Info",
-          recommendation: "Ensure you're running a supported and up-to-date version"
-        });
-      } catch (error) {
-        console.error("Error checking database version:", error);
-      }
-      
-    } catch (queryError) {
-      console.error("Error during audit queries:", queryError);
-      auditResults.push({
-        issue: "Error executing some audit checks",
-        severity: "Error",
-        recommendation: "Check server logs for details"
-      });
+    return res.json({ success: true, results: auditResults });
+  } catch (error) {
+    console.error('Failed to connect to the database:', error);
+    return res.status(500).json({ error: 'Database connection failed', details: error.message });
+  } finally {
+    if (sequelize) {
+      await sequelize.close();
     }
-
-    res.json({ success: true, results: auditResults });
-  } catch (err) {
-    console.error("Error connecting to database:", err);
-    res.status(500).json({ success: false, error: "Failed to connect to database. Please check your credentials." });
   }
 }
 
-module.exports = { scan };
+async function auditSqlDatabase(sequelize) {
+  const results = {
+    vulnerabilities: [],
+    risks: [],
+    recommendations: []
+  };
+
+  try {
+    // 1. Check for weak table schemas (missing primary keys)
+    const [tables] = await sequelize.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = '${sequelize.config.database}'
+    `);
+
+    for (const table of tables) {
+      const tableName = table.table_name || table.TABLE_NAME;
+      
+      // Check for primary keys
+      const [primaryKeys] = await sequelize.query(`
+        SELECT column_name
+        FROM information_schema.key_column_usage
+        WHERE table_schema = '${sequelize.config.database}'
+        AND table_name = '${tableName}'
+        AND constraint_name = 'PRIMARY'
+      `);
+
+      if (primaryKeys.length === 0) {
+        results.vulnerabilities.push({
+          type: 'schema',
+          severity: 'medium',
+          description: `Table '${tableName}' has no primary key defined`,
+          recommendation: 'Add a primary key to the table to ensure data integrity'
+        });
+      }
+      
+      // Check for indexes on frequently queried columns
+      const [indexes] = await sequelize.query(`
+        SHOW INDEX FROM ${tableName}
+      `).catch(() => [[]]);
+      
+      if (indexes.length <= 1) { // Only primary key index or no indexes
+        results.risks.push({
+          type: 'performance',
+          severity: 'low',
+          description: `Table '${tableName}' might lack proper indexing`,
+          recommendation: 'Review query patterns and add indexes to frequently queried columns'
+        });
+      }
+    }
+
+    // 2. Check user privileges (look for overprivileged users)
+    const [users] = await sequelize.query(`
+      SELECT user, host 
+      FROM mysql.user 
+      WHERE Super_priv = 'Y' OR Grant_priv = 'Y'
+    `).catch(() => [[]]);
+    
+    if (users.length > 0) {
+      results.vulnerabilities.push({
+        type: 'privilege',
+        severity: 'high',
+        description: 'Users with SUPER or GRANT privileges detected',
+        details: users.map(u => `${u.user}@${u.host}`),
+        recommendation: 'Review and revoke unnecessary privileges from users'
+      });
+    }
+
+    // 3. Check database settings
+    if (sequelize.options.dialect === 'mysql') {
+      const [variables] = await sequelize.query(`SHOW VARIABLES LIKE '%password%'`);
+      const passwordValidation = variables.find(v => 
+        v.Variable_name === 'validate_password_policy' || 
+        v.Variable_name === 'validate_password.policy'
+      );
+      
+      if (!passwordValidation || passwordValidation.Value === 'LOW') {
+        results.risks.push({
+          type: 'security',
+          severity: 'medium',
+          description: 'Weak password policy configured',
+          recommendation: 'Set password policy to MEDIUM or STRONG'
+        });
+      }
+    }
+
+    // Add general recommendations
+    results.recommendations.push(
+      'Implement regular backups and test restoration procedures',
+      'Enable SSL/TLS for database connections',
+      'Sanitize user inputs to prevent SQL injection',
+      'Use parameterized queries instead of string concatenation'
+    );
+
+    return results;
+  } catch (error) {
+    console.error('Error during SQL database audit:', error);
+    return {
+      error: 'Audit process failed',
+      details: error.message,
+      partial_results: results
+    };
+  }
+}
+
+async function mongoScan(req, res){
+  const { host, username, password, database } = req.body;
+  
+  if (!host || !database) {
+    return res.status(400).json({ error: 'Missing required MongoDB connection parameters' });
+  }
+
+  let client;
+  try {
+    // Construct MongoDB connection URI
+    const uri = username && password 
+      ? `mongodb://${username}:${password}@${host}/${database}`
+      : `mongodb://${host}/${database}`;
+      
+    client = new MongoClient(uri, { useUnifiedTopology: true });
+    await client.connect();
+    
+    console.log('MongoDB connection established successfully');
+    
+    // Start audit process
+    const auditResults = await auditMongoDatabase(client, database);
+    
+    return res.json({ success: true, results: auditResults });
+  } catch (error) {
+    console.error('Failed to connect to MongoDB:', error);
+    return res.status(500).json({ error: 'MongoDB connection failed', details: error.message });
+  } finally {
+    if (client) {
+      await client.close();
+    }
+  }
+
+}
+
+
+async function auditMongoDatabase(client, databaseName) {
+  const results = {
+    vulnerabilities: [],
+    risks: [],
+    recommendations: []
+  };
+
+  try {
+    const db = client.db(databaseName);
+    
+    // 1. Check MongoDB version for known vulnerabilities
+    const buildInfo = await db.admin().buildInfo();
+    const version = buildInfo.version;
+    
+    // Check for old MongoDB versions
+    const [major, minor] = version.split('.').map(Number);
+    if (major < 4) {
+      results.vulnerabilities.push({
+        type: 'version',
+        severity: 'high',
+        description: `MongoDB version ${version} is outdated`,
+        recommendation: 'Upgrade to MongoDB 4.4 or later for security improvements'
+      });
+    }
+    
+    // 2. Check authentication mode
+    const runCommand = await db.admin().command({ getParameter: 1, authenticationMechanisms: 1 })
+      .catch(() => ({ authenticationMechanisms: ['NONE'] }));
+    
+    if (!runCommand.authenticationMechanisms || 
+        runCommand.authenticationMechanisms.includes('NONE')) {
+      results.vulnerabilities.push({
+        type: 'authentication',
+        severity: 'critical',
+        description: 'MongoDB may be running without authentication',
+        recommendation: 'Enable authentication and create proper user accounts'
+      });
+    }
+    
+    // 3. Check for collections without indexes
+    const collections = await db.listCollections().toArray();
+    
+    for (const collection of collections) {
+      const collName = collection.name;
+      const indexes = await db.collection(collName).indexes();
+      
+      if (indexes.length <= 1) { // Only _id index or no indexes
+        results.risks.push({
+          type: 'performance',
+          severity: 'medium',
+          description: `Collection '${collName}' might lack proper indexing`,
+          recommendation: 'Add indexes to frequently queried fields'
+        });
+      }
+      
+      // Check if collection might have unbounded growth
+      if (['logs', 'audit', 'events', 'transactions'].some(term => 
+          collName.toLowerCase().includes(term))) {
+        results.risks.push({
+          type: 'storage',
+          severity: 'medium',
+          description: `Collection '${collName}' may experience unbounded growth`,
+          recommendation: 'Consider implementing a TTL index or archiving strategy'
+        });
+      }
+    }
+    
+    // 4. Check for user roles and privileges
+    try {
+      const users = await db.admin().command({ usersInfo: 1 });
+      
+      if (users.users) {
+        const adminUsers = users.users.filter(user => 
+          user.roles.some(role => role.role === 'root' || role.role === 'userAdminAnyDatabase')
+        );
+        
+        if (adminUsers.length > 2) {
+          results.risks.push({
+            type: 'privilege',
+            severity: 'medium',
+            description: 'Multiple users with administrative privileges detected',
+            details: adminUsers.map(u => u.user),
+            recommendation: 'Limit the number of administrator users'
+          });
+        }
+      }
+    } catch (error) {
+      // May not have permission to check users
+      results.risks.push({
+        type: 'audit_limitation',
+        severity: 'low',
+        description: 'Could not verify user privileges',
+        recommendation: 'Run audit with administrative privileges for complete results'
+      });
+    }
+
+    // Add MongoDB-specific recommendations
+    results.recommendations.push(
+      'Use MongoDB Atlas or enable security features available in your version',
+      'Implement field-level encryption for sensitive data',
+      'Configure network security with IP whitelisting',
+      'Set up automated backups with point-in-time recovery'
+    );
+
+    return results;
+  } catch (error) {
+    console.error('Error during MongoDB audit:', error);
+    return {
+      error: 'Audit process failed',
+      details: error.message,
+      partial_results: results
+    };
+  }
+}
+
+module.exports = { sqlScan, mongoScan };
