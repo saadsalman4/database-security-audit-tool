@@ -2,12 +2,18 @@ import React, { useState } from "react";
 import axios from "axios";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import "./DatabaseAuditForm.css"; // Import CSS file
+import "./DatabaseAuditForm.css";
 
 interface AuditResult {
   issue: string;
   severity: string;
   recommendation: string;
+}
+
+interface ApiResponse {
+  success: boolean;
+  results: AuditResult[];
+  error?: string;
 }
 
 const DatabaseAuditForm: React.FC = () => {
@@ -16,7 +22,7 @@ const DatabaseAuditForm: React.FC = () => {
     username: "",
     password: "",
     database: "",
-    type: "mysql", // or "postgres"
+    dialect: "mysql", // or "postgres"
   });
 
   const [auditResults, setAuditResults] = useState<AuditResult[]>([]);
@@ -32,10 +38,16 @@ const DatabaseAuditForm: React.FC = () => {
     setAuditResults([]);
 
     try {
-      const response = await axios.post("http://localhost:5000/api/audit", dbConfig);
-      setAuditResults(response.data);
-      toast.success("Audit completed successfully!");
+      const response = await axios.post<ApiResponse>("http://localhost:3000/api/scan", dbConfig);
+      
+      if (response.data.success && response.data.results) {
+        setAuditResults(response.data.results);
+        toast.success("Audit completed successfully!");
+      } else {
+        toast.error(response.data.error || "Unknown error occurred");
+      }
     } catch (error) {
+      console.error("Audit error:", error);
       toast.error("Failed to connect to the database. Check your credentials.");
     } finally {
       setLoading(false);
@@ -48,10 +60,10 @@ const DatabaseAuditForm: React.FC = () => {
       <form onSubmit={handleSubmit}>
         <input type="text" name="host" value={dbConfig.host} onChange={handleChange} placeholder="Database Host" required />
         <input type="text" name="username" value={dbConfig.username} onChange={handleChange} placeholder="Username" required />
-        <input type="password" name="password" value={dbConfig.password} onChange={handleChange} placeholder="Password" required />
+        <input type="password" name="password" value={dbConfig.password} onChange={handleChange} placeholder="Password" />
         <input type="text" name="database" value={dbConfig.database} onChange={handleChange} placeholder="Database Name" required />
         
-        <select name="type" value={dbConfig.type} onChange={handleChange}>
+        <select name="dialect" value={dbConfig.dialect} onChange={handleChange}>
           <option value="mysql">MySQL</option>
           <option value="postgres">PostgreSQL</option>
         </select>
@@ -74,7 +86,7 @@ const DatabaseAuditForm: React.FC = () => {
             </thead>
             <tbody>
               {auditResults.map((result, index) => (
-                <tr key={index}>
+                <tr key={index} className={`severity-${result.severity.toLowerCase()}`}>
                   <td>{result.issue}</td>
                   <td>{result.severity}</td>
                   <td>{result.recommendation}</td>
