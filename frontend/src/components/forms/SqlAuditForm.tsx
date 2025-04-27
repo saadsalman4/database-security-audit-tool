@@ -140,9 +140,9 @@ const SqlAuditForm: React.FC<SqlAuditFormProps> = ({ onAuditComplete, onAuditErr
             required
           >
             <option value="mysql">MySQL</option>
-            <option value="postgres">PostgreSQL</option>
+            {/* <option value="postgres">PostgreSQL</option>
             <option value="mariadb">MariaDB</option>
-            <option value="mssql">Microsoft SQL Server</option>
+            <option value="mssql">Microsoft SQL Server</option> */}
           </select>
           {errors.dialect && (
             <p className="mt-1 text-sm text-red-600">{errors.dialect}</p>
