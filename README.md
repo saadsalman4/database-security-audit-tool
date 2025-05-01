@@ -65,4 +65,4 @@ Its **user-friendly experience**, combined with **real-time analysis** and **act
 
 ## 🌀 Live Preview
 
-![Live demo gif](screenshots/demo.gif)
+![Live demo gif](screenshots/gif.gif)
