@@ -62,3 +62,7 @@ This project successfully demonstrates a **lightweight, web-based tool** that em
 By providing **instant feedback on security gaps**, the tool not only helps mitigate immediate risks but also promotes a **culture of proactive database management**.
 
 Its **user-friendly experience**, combined with **real-time analysis** and **actionable results**, makes it a valuable resource for individuals, developers, and small organizations aiming to strengthen their database security posture.
+
+## 🌀 Live Preview
+
+![Live demo gif](screenshots/gif.gif)
