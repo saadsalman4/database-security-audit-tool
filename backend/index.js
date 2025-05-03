@@ -5,7 +5,7 @@ const os = require('os');
 require('dotenv').config();
 
 const app = express();
-const PORT = 3000;
+const PORT = 3001;
 
 const auditRoutes = require('./routes/audit.routes')
 
