@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const os = require('os');
-require('dotenv').config();
 
 const app = express();
 const PORT = 3001;
@@ -19,24 +18,22 @@ app.use('/api', auditRoutes)
 
 
 
-app.get('/simulate-load', async (req, res) => {
+app.post('/simulate-load', async (req, res) => {
   const count = parseInt(req.query.count || '100');
-  const endpoint = `http://localhost:${PORT}/api/audit/sql`;
+  const endpoint = `http://127.0.0.1:${PORT}/api/audit/sql`;
 
-  const dummyPayload = {
-    host: process.env.DUMMY_DB_HOST,
-    username: process.env.DUMMY_DB_USER,
-    password: process.env.DUMMY_DB_PASS,
-    database: 'votingsystem_test',
-    dialect: 'mysql'
-  };
+  const payload = req.body;
+
+  if (!payload || !payload.host || !payload.username || !payload.database || !payload.dialect) {
+    return res.status(400).json({ error: 'Missing required database parameters in payload' });
+  }
 
   const requests = [];
 
   for (let i = 0; i < count; i++) {
     requests.push(
-      axios.post(endpoint, dummyPayload).catch((err) => {
-        return { error: err.message }; // don't block on failed requests
+      axios.post(endpoint, payload).catch((err) => {
+        return { error: err.message };
       })
     );
   }
@@ -47,7 +44,8 @@ app.get('/simulate-load', async (req, res) => {
 });
 
 
-app.listen(PORT, (error) =>{
+
+app.listen(PORT, '0.0.0.0',(error) =>{
     if(!error)
         console.log("Server is Successfully Running, and App is listening on port "+ PORT)
     else 
