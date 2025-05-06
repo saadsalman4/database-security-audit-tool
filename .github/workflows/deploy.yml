@@ -1,4 +1,4 @@
-name: Deploy Backend to AWS Lambda
+name: Deploy Frontend & Backend to AWS Lambda
 
 on:
   push:
@@ -31,3 +31,24 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: serverless deploy
+
+      # Frontend Deployment
+      - name: Setup Node.js for Frontend
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Frontend Dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build Frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Sync Frontend to S3
+        run: |
+          aws s3 sync frontend/dist/ s3://db-audit-serverless-bucket --delete
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
