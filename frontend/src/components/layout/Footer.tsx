@@ -15,7 +15,7 @@ const Footer: React.FC = () => {
           </p>
           <div className="mt-4 flex space-x-6">
             <a href="#" className="text-gray-400 hover:text-gray-500">
-              By 21K-4664 Saad Salman
+              By 21K-4664 Saad Salman, 21k-4664 Haris Ahmad, 21K-3436 Shahmeer Ather, 21K-3964 Saud Jamal
             </a>
           </div>
         </div>
