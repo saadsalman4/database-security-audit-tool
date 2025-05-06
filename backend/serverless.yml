@@ -1,22 +1,25 @@
-service: nodejs-express-app
-
-frameworkVersion: '3'
+service: express-lambda
 
 provider:
   name: aws
   runtime: nodejs18.x
   region: us-east-1
-  timeout: 10
 
 functions:
   app:
-    handler: index.handler
+    handler: index.handler  # This should match your export (module.exports.handler)
     events:
-      - httpApi: '*'
+      - http:
+          path: /
+          method: get
+      - http:
+          path: /api/{proxy+}
+          method: any
+    environment:
+      NODE_ENV: production
 
 package:
-  patterns:
-    - '!node_modules/**'
-    - '!package-lock.json'
-    - '!**/*.md'
-    - '**'
+  include:
+    - node_modules/**
+    - routes/**
+    - index.js
