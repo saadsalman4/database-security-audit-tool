@@ -63,6 +63,3 @@ By providing **instant feedback on security gaps**, the tool not only helps miti
 
 Its **user-friendly experience**, combined with **real-time analysis** and **actionable results**, makes it a valuable resource for individuals, developers, and small organizations aiming to strengthen their database security posture.
 
-## 🌀 Live Preview
-
-![Live demo gif](screenshots/gif.gif)
